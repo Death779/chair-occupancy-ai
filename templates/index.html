@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализ заполненности зала</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f8f9fa; color: #343a40; }
+        .header { background-color: #007bff; color: white; padding: 15px 0; text-align: center; }
+        .nav { text-align: center; padding: 10px; background: #e9ecef; }
+        .nav a { margin: 0 15px; text-decoration: none; color: #007bff; font-weight: bold; }
+        .container { max-width: 900px; margin: 30px auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .form-group { text-align: center; margin-bottom: 30px; padding: 20px; border: 2px dashed #007bff; border-radius: 8px; background: #f1f7fd; }
+        .controls { display: flex; justify-content: space-around; margin: 20px 0; align-items: center; flex-wrap: wrap; }
+        .control-item { display: flex; flex-direction: column; align-items: center; margin: 10px; }
+        button { background-color: #007bff; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; margin-top: 15px; }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        .results { display: flex; justify-content: space-between; flex-wrap: wrap; margin-top: 30px; }
+        .img-box { width: 48%; text-align: center; margin-bottom: 20px; }
+        .img-box img { max-width: 100%; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+        .stats { margin-top: 20px; padding: 20px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; color: #155724; font-size: 18px; text-align: center; }
+        .stats p { margin: 10px 0; }
+        .stats strong { font-weight: 700; }
+        #results-container { display: none; }
+        #loader { display: none; text-align: center; font-size: 18px; color: #007bff; font-weight: bold; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Детекция объектов: Анализ зала</h1>
+    </div>
+    <div class="nav">
+        <a href="/">Главная</a>
+        <a href="/history">История запросов</a>
+    </div>
+    
+    <div class="container">
+        <h2 style="text-align: center;">Загрузка изображения</h2>
+        <form id="upload-form" class="form-group">
+            <input type="file" id="file" name="file" accept="image/jpeg, image/png" required style="font-size: 16px;">
+            
+            <div class="controls">
+                <div class="control-item">
+                    <label for="confidence">Порог уверенности: <strong id="conf-val">0.25</strong></label>
+                    <input type="range" id="confidence" min="0.05" max="0.95" step="0.05" value="0.25" name="confidence" oninput="document.getElementById('conf-val').innerText = this.value">
+                </div>
+                
+                <div class="control-item">
+                    <label for="model_size">Версия YOLOv8:</label>
+                    <select id="model_size" name="model_size" style="padding: 5px; font-size: 14px;">
+                        <option value="n">Nano (Быстрая, менее точная)</option>
+                        <option value="s">Small (Сбалансированная)</option>
+                        <option value="m">Medium (Точная, медленная)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button type="submit" id="submit-btn">Запустить обработку YOLOv8</button>
+        </form>
+        
+        <div id="loader">Идет обработка изображения. Пожалуйста, подождите...</div>
+
+        <div id="results-container">
+            <h2 style="text-align: center; margin-top: 40px;">Результаты анализа</h2>
+            <div class="stats" id="stats-box">
+                <p>Найдено людей: <strong id="people-count">0</strong></p>
+                <p>Найдено стульев: <strong id="chairs-count">0</strong></p>
+                <p>Занято мест: <strong id="occupied-seats">0</strong></p>
+                <p>Текущая заполненность зала: <strong id="occupancy-val">0%</strong></p>
+                <p>Статус: <strong id="status-val">Норма</strong></p>
+                <div style="margin-top: 20px;">
+                    <a id="export-single-btn" href="#" class="btn" style="display: none; background-color: #dc3545; color: white; padding: 10px 15px; text-decoration: none; border-radius: 5px; font-weight: bold;">Выгрузить отчет обработки (PDF)</a>
+                </div>
+            </div>
+
+            <div class="results">
+                <div class="img-box">
+                    <h3>Оригинальное изображение</h3>
+                    <img id="orig-img" src="" alt="Оригинал">
+                </div>
+                <div class="img-box">
+                    <h3>Обработанное (Bounding Boxes)</h3>
+                    <img id="res-img" src="" alt="Результат YOLO">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('file');
+            if (!fileInput.files.length) return;
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            formData.append('confidence', document.getElementById('confidence').value);
+            formData.append('model_size', document.getElementById('model_size').value);
+
+            const submitBtn = document.getElementById('submit-btn');
+            const loader = document.getElementById('loader');
+            const resultsContainer = document.getElementById('results-container');
+            
+            submitBtn.disabled = true;
+            loader.style.display = 'block';
+            resultsContainer.style.display = 'none';
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('people-count').innerText = data.people_count;
+                    document.getElementById('chairs-count').innerText = data.chairs_count;
+                    document.getElementById('occupied-seats').innerText = data.occupied_seats;
+                    document.getElementById('occupancy-val').innerText = data.occupancy + '%';
+                    
+                    const statusEl = document.getElementById('status-val');
+                    statusEl.innerText = data.status;
+                    if (data.status === 'Зал переполнен' || data.status === 'Стулья не обнаружены') {
+                        statusEl.style.color = 'red';
+                    } else {
+                        statusEl.style.color = '#155724';
+                    }
+
+                    // Добавляем timestamp к изображениям, чтобы избежать кэширования браузером
+                    const ts = new Date().getTime();
+                    document.getElementById('orig-img').src = data.orig_path + '?t=' + ts;
+                    document.getElementById('res-img').src = data.res_path + '?t=' + ts;
+                    
+                    const exportBtn = document.getElementById('export-single-btn');
+                    exportBtn.href = '/export_single_pdf/' + data.record_id;
+                    exportBtn.style.display = 'inline-block';
+                    
+                    resultsContainer.style.display = 'block';
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (err) {
+                alert('Произошла ошибка при отправке запроса.');
+                console.error(err);
+            } finally {
+                submitBtn.disabled = false;
+                loader.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>
